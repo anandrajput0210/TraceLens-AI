@@ -1,0 +1,1 @@
+DATABASE_URL = "postgres://admin:SuperPassword123@prod-db:5432/app"
