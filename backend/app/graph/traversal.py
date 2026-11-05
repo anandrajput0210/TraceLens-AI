@@ -41,6 +41,11 @@ def find_public_risk_path(
     finding_file: str,
     max_depth: int = 6,
 ) -> list[str]:
+    """Return a static dependency path to a route, if one is found.
+
+    This is a repository-structure heuristic. It does not prove that a finding
+    is data-flow reachable, executed at runtime, exploitable, or publicly exposed.
+    """
 
     start_node = _find_file_node(
         graph,

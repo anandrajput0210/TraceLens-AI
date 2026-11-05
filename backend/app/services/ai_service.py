@@ -1,8 +1,12 @@
+from google import genai
+from google.genai import types
+
 import json
 import os
+from app.utils.redaction import redact_data
 
-from openai import OpenAI
 
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 SYSTEM_PROMPT = """
 You are TraceLens AI, a security reasoning assistant.
@@ -33,24 +37,39 @@ Return exactly valid JSON:
 
 
 def explain_finding(finding: dict) -> dict:
-    api_key = os.getenv("OPENAI_API_KEY")
-
+    # Explain a pre-computed TraceLens finding with Google's Gemini API.
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured.")
+        raise RuntimeError("GEMINI_API_KEY is not configured.")
 
-    client = OpenAI(api_key=api_key)
+    model = os.getenv("TRACELENS_AI_MODEL", "gemini-3.5-flash-lite").strip()
+    if not model:
+        model = "gemini-3.5-flash-lite"
 
-    response = client.responses.create(
-        model="gpt-5.6-luna",
-        instructions=SYSTEM_PROMPT,
-        input=json.dumps(finding, indent=2),
-    )
-
-    raw_output = response.output_text
-
+    safe_finding = redact_data(finding) if callable(globals().get("redact_data")) else finding
     try:
-        return json.loads(raw_output)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            "AI returned an invalid JSON response."
-        ) from exc
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=json.dumps(safe_finding, indent=2, default=str),
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
+    except Exception:
+        raise RuntimeError("AI service unavailable") from None
+
+    raw_output = getattr(response, "text", None)
+    if not isinstance(raw_output, str) or not raw_output.strip():
+        raise RuntimeError("AI returned an empty response.")
+    try:
+        parsed = json.loads(raw_output)
+    except json.JSONDecodeError:
+        raise RuntimeError("AI returned an invalid JSON response.") from None
+    if not isinstance(parsed, dict):
+        raise RuntimeError("AI returned an invalid JSON response.")
+    if callable(globals().get("redact_data")):
+        parsed = redact_data(parsed)
+    return parsed

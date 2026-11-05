@@ -2,6 +2,9 @@ import json
 import re
 import urllib.request
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 MAX_DOWNLOAD_SIZE = 50_000_000  # 50 MB
 REQUEST_TIMEOUT = 20
@@ -51,8 +54,16 @@ def get_default_branch(owner: str, repo: str) -> str:
             data = json.loads(response.read().decode("utf-8"))
 
     except Exception as error:
+        logger.warning(
+            "Failed to access GitHub repository metadata for %s/%s",
+            owner,
+            repo,
+            exc_info=True,
+        )
+
         raise ValueError(
-            f"Unable to access GitHub repository: {error}"
+            "Unable to access GitHub repository metadata. "
+            "Confirm that the repository exists and is public."
         ) from error
 
     default_branch = data.get("default_branch")
@@ -94,12 +105,23 @@ def download_github_repository(
 
             content_length = response.headers.get("Content-Length")
 
-            if content_length:
-                if int(content_length) > MAX_DOWNLOAD_SIZE:
+            if content_length is not None:
+                try:
+                    content_length_value = int(content_length)
+                except ValueError as error:
+                    raise ValueError(
+                        "GitHub repository returned an invalid Content-Length header."
+                    ) from error
+
+                if content_length_value < 0:
+                    raise ValueError(
+                        "GitHub repository returned an invalid Content-Length header."
+                    )
+
+                if content_length_value > MAX_DOWNLOAD_SIZE:
                     raise ValueError(
                         "GitHub repository download exceeds the 50 MB limit."
                     )
-
             downloaded = 0
 
             with destination.open("wb") as output:
@@ -122,8 +144,15 @@ def download_github_repository(
         raise
 
     except Exception as error:
-        raise ValueError(
-            f"Unable to download GitHub repository: {error}"
-        ) from error
+        logger.warning(
+            "Failed to download GitHub repository archive for %s/%s",
+            owner,
+            repo,
+            exc_info=True,
+        )
 
+        raise ValueError(
+            "Unable to download the GitHub repository archive. "
+            "Confirm that the repository exists and is public."
+        ) from error
     return str(destination)

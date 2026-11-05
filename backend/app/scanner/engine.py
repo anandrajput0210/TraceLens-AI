@@ -1,5 +1,5 @@
 from app.models.finding import Finding
-
+from app.utils.redaction import redact_evidence
 from app.graph.builder import ApplicationGraphBuilder
 from app.graph.traversal import find_public_risk_path
 
@@ -54,7 +54,7 @@ class ScannerEngine:
             error = {
                 "rule_id": rule_id,
                 "file": relative_path,
-                "error": str(exc),
+                "error": redact_evidence(str(exc)),
             }
 
             self.errors.append(error)
@@ -259,27 +259,23 @@ class ScannerEngine:
                 )
 
                 # ---------------------------------------------
-                # Application reachability
-                # ---------------------------------------------
-
+                # Application relationship / reachability hint
+                # A static import path to a route is not proof that the finding's
+                # vulnerable code is executed or that the route is internet-facing.
                 risk_path = find_public_risk_path(
                     graph,
                     relative_path,
                 )
 
                 if risk_path:
-
-                    reachability = "HIGH"
-
-                    exposure = "PUBLIC"
-
-                    exposure_confidence = 0.90
-
+                    # Keep this heuristic below HIGH until data-flow or runtime
+                    # reachability is actually established.
+                    reachability = "MEDIUM"
                 else:
+                    # NONE means no path was found by this graph, not proof that
+                    # the issue is unreachable in a running deployment.
+                    reachability = "UNKNOWN"
 
-                    reachability = "NONE"
-
-                # ---------------------------------------------
                 # Combined confidence
                 # ---------------------------------------------
 

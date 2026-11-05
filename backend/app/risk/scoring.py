@@ -16,11 +16,14 @@ EXPOSURE_SCORES = {
     "UNKNOWN": 40,
 }
 
+# A missing static path is uncertainty, not proof of no reachability.
 REACHABILITY_SCORES = {
     "HIGH": 100,
     "MEDIUM": 70,
     "LOW": 40,
+    # NONE is retained for callers that explicitly use that state.
     "NONE": 10,
+    "UNKNOWN": 40,
 }
 
 ENVIRONMENT_SCORES = {
@@ -57,7 +60,7 @@ def calculate_context_risk(
 
     reachability_score = REACHABILITY_SCORES.get(
         reachability.upper(),
-        10,
+        40,
     )
 
     environment_score = ENVIRONMENT_SCORES.get(

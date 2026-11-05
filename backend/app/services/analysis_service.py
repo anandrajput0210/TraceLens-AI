@@ -162,7 +162,7 @@ def run_analysis(
             "analysis_id": analysis_id,
             "status": "failed",
             "progress": 100,
-            "error": str(error),
+            "error": redact_evidence(str(error)),
         }
 
     finally:

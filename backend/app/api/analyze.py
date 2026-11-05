@@ -1,6 +1,8 @@
+import logging
 import shutil
 import tempfile
 from pathlib import Path
+from zipfile import BadZipFile
 
 from fastapi import (
     APIRouter,
@@ -20,11 +22,34 @@ from app.services.analysis_service import (
 from app.services.github_service import download_github_repository
 
 
+logger = logging.getLogger(__name__)
+
+MAX_UPLOAD_SIZE = 50_000_000  # 50 MB
+UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
+
 router = APIRouter(
     prefix="/api/analyze",
     tags=["Analysis"],
 )
 
+def _run_analysis_and_cleanup(
+    analysis_id: str,
+    repository_path: str,
+    repository_name: str,
+    temp_root: str,
+) -> None:
+    """Run the analysis and remove its entire temporary workspace."""
+    try:
+        run_analysis(
+            analysis_id,
+            repository_path,
+            repository_name,
+        )
+    finally:
+        shutil.rmtree(
+            temp_root,
+            ignore_errors=True,
+        )
 
 @router.post("")
 async def start_analysis(
@@ -89,12 +114,26 @@ async def start_analysis(
                     detail="Only ZIP repositories are supported.",
                 )
 
-            with zip_path.open("wb") as output:
+            total_uploaded = 0
 
-                shutil.copyfileobj(
-                    repository.file,
-                    output,
-                )
+            with zip_path.open("wb") as output:
+                while True:
+                    chunk = await repository.read(UPLOAD_CHUNK_SIZE)
+
+                    if not chunk:
+                        break
+
+                    total_uploaded += len(chunk)
+
+                    if total_uploaded > MAX_UPLOAD_SIZE:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "Uploaded ZIP exceeds the maximum "
+                                "allowed upload size."
+                            ),
+                        )
+                    output.write(chunk)
 
         # =====================================================
         # SOURCE 2: GitHub repository
@@ -133,12 +172,12 @@ async def start_analysis(
         # -----------------------------------------------------
 
         background_tasks.add_task(
-            run_analysis,
+            _run_analysis_and_cleanup,
             analysis_id,
             repository_path,
             Path(repository_path).name,
+            str(temp_root),
         )
-
         return {
             "analysis_id": analysis_id,
             "status": "queued",
@@ -151,7 +190,16 @@ async def start_analysis(
             ignore_errors=True,
         )
         raise
+    except BadZipFile as error:
+        shutil.rmtree(
+            temp_root,
+            ignore_errors=True,
+        )
 
+        raise HTTPException(
+            status_code=400,
+            detail="The supplied archive is not a valid ZIP file.",
+        ) from error
     except ValueError as error:
 
         shutil.rmtree(
@@ -165,6 +213,7 @@ async def start_analysis(
         )
 
     except Exception as error:
+        logger.exception("Unexpected repository ingestion failure")
 
         shutil.rmtree(
             temp_root,
@@ -173,9 +222,11 @@ async def start_analysis(
 
         raise HTTPException(
             status_code=500,
-            detail=f"Unable to process repository: {error}",
-        )
-
+            detail=(
+                "Unable to process the repository. "
+                "Check the ZIP file or GitHub URL and try again."
+            ),
+        ) from error
 
 @router.get("/{analysis_id}")
 def get_analysis(analysis_id: str):

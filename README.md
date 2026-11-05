@@ -10,7 +10,7 @@ TraceLens adds repository context to security findings by analyzing:
 
 - Environment
 - Exposure
-- Static application reachability
+- Static code-relationship hints (not proof of runtime or public reachability)
 - Security severity
 - Detection confidence
 - Repository relationships

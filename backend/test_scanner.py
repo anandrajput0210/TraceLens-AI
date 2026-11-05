@@ -1,6 +1,11 @@
+from pathlib import Path
 from app.scanner.secrets import scan_high_entropy_strings
 from app.scanner.engine import ScannerEngine
 from app.services.repository_service import discover_files
+
+DEMO_REPO_PATH = str(
+    Path(__file__).resolve().parents[1] / "demo-repo"
+)
 
 EXPECTED_DEMO_RULES = {
     "SEC-001",
@@ -13,7 +18,7 @@ EXPECTED_DEMO_RULES = {
 }
 
 def test_scanner_finds_expected_rules():
-    repository_path = "../demo-repo"
+    repository_path = DEMO_REPO_PATH
 
     files = discover_files(repository_path)
 
@@ -37,7 +42,7 @@ def test_scanner_finds_expected_rules():
 
 
 def test_scanner_returns_findings():
-    repository_path = "../demo-repo"
+    repository_path = DEMO_REPO_PATH
 
     files = discover_files(repository_path)
 
@@ -52,7 +57,7 @@ def test_scanner_returns_findings():
 
 
 def test_findings_have_valid_scores():
-    repository_path = "../demo-repo"
+    repository_path = DEMO_REPO_PATH
 
     files = discover_files(repository_path)
 
@@ -70,17 +75,12 @@ def test_findings_have_valid_scores():
         assert 0 <= finding.exposure_confidence <= 1
 
 
-def test_production_credential_is_high_risk():
-    repository_path = "../demo-repo"
+def test_production_credential_does_not_overclaim_public_reachability():
+    repository_path = str(Path(__file__).resolve().parents[1] / "demo-repo")
 
     files = discover_files(repository_path)
-
     engine = ScannerEngine()
-
-    findings = engine.scan_repository(
-        repository_path,
-        files,
-    )
+    findings = engine.scan_repository(repository_path, files)
 
     production_findings = [
         finding
@@ -92,11 +92,11 @@ def test_production_credential_is_high_risk():
     assert production_findings
 
     finding = production_findings[0]
-
     assert finding.environment == "PRODUCTION"
-    assert finding.exposure == "PUBLIC"
-    assert finding.reachability == "HIGH"
-    assert finding.context_score >= 90
+    assert finding.exposure == "UNKNOWN"
+    assert finding.reachability == "MEDIUM"
+    assert finding.risk_path
+    assert 0 <= finding.context_score <= 100
 
 def test_high_entropy_secret_detection(tmp_path):
     test_file = tmp_path / "secret.py"

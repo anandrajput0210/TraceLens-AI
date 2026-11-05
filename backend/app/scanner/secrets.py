@@ -33,6 +33,44 @@ SAFE_VALUE_PATTERNS = [
     "getenv(",
 ]
 
+# Explicit placeholder markers and references are not literal credentials.
+# Keep these patterns narrow: arbitrary strings in test files are still scanned.
+SAFE_REFERENCE_PATTERNS = (
+    re.compile(r"^\$\{\{\s*(?:secrets|vars|env)\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}$", re.IGNORECASE),
+    re.compile(r"^\$\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}$"),
+    re.compile(r"^\$[A-Za-z_][A-Za-z0-9_]*$"),
+)
+
+PLACEHOLDER_TOKEN_PATTERN = re.compile(
+    r"(?i)(?:^|[._:/-])(?:demo|dummy|example|sample|fake|placeholder|"
+    r"changeme|replace[-_]?me|redacted)(?:$|[._:/-])"
+)
+
+CAMEL_PLACEHOLDER_PREFIX_PATTERN = re.compile(
+    r"^(?i:demo|dummy|example|sample|fake|placeholder|redacted)[A-Z][A-Za-z0-9_-]*$"
+)
+
+TEST_PLACEHOLDER_PATTERN = re.compile(
+    r"^(?:test|testing)(?:password|secret|token|key|credential|value|placeholder)[A-Za-z0-9_-]*$", re.IGNORECASE
+)
+
+
+def is_placeholder_or_reference(value: str) -> bool:
+    """Return True only for clearly labelled placeholders or variable references."""
+    value = value.strip().strip("\"'")
+    if not value:
+        return False
+    if any(pattern.fullmatch(value) for pattern in SAFE_REFERENCE_PATTERNS):
+        return True
+    if PLACEHOLDER_TOKEN_PATTERN.search(value):
+        return True
+    if CAMEL_PLACEHOLDER_PREFIX_PATTERN.fullmatch(value):
+        return True
+    if TEST_PLACEHOLDER_PATTERN.fullmatch(value):
+        return True
+    return False
+
+
 
 # =========================================================
 # COMMON NON-SECRET PATTERNS
@@ -88,6 +126,9 @@ def looks_like_secret_value(value: str) -> bool:
     """
 
     value = value.strip().strip("\"'")
+
+    if is_placeholder_or_reference(value):
+        return False
 
     if not value:
         return False
@@ -181,6 +222,9 @@ def looks_like_obvious_non_secret(value: str) -> bool:
     """
 
     value = value.strip().strip("\"'")
+
+    if is_placeholder_or_reference(value):
+        return True
 
     if not value:
         return True

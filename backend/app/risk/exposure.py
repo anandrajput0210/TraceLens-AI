@@ -2,73 +2,76 @@ from pathlib import Path
 import re
 
 
-PUBLIC_SIGNALS = [
-    "0.0.0.0",
-    "allow_origins=['*']",
-    'allow_origins=["*"]',
-    'origin: "*"',
-    'origin:"*"',
-    "public=true",
-    "public: true",
-]
+# These signals are deliberately narrow. A generic route declaration, a Docker
+# EXPOSE instruction, wildcard CORS, or a 0.0.0.0 bind does not prove that an
+# application is reachable from the public internet.
+PUBLIC_PATTERNS = (
+    re.compile(
+        r"\b(?:publicly[_-]?accessible|public[_-]?access|internet[_-]?facing)"
+        r"\b\s*[:=]\s*(?:true|yes|1)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:acl|accesscontrol)\b\s*[:=]\s*['\"]public-read(?:-write)?['\"]",
+        re.IGNORECASE,
+    ),
+)
 
+ALL_INTERFACE_BIND_PATTERNS = (
+    # Bind evidence is scoped to recognizable application-server invocations,
+    # common server-host environment variables, or an explicit --host option.
+    # A generic host field may describe a database client, not the web server.
+    re.compile(
+        r"\b(?:app|application|server|uvicorn|web)\.(?:run|listen|serve)\s*\([^)]*\bhost\s*[:=]\s*['\"]?0\.0\.0\.0\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(r"--host(?:\s+|=)['\"]?0\.0\.0\.0\b", re.IGNORECASE),
+    re.compile(
+        r"^\s*(?:HOST|BIND_HOST|SERVER_HOST|LISTEN_HOST)\s*=\s*['\"]?0\.0\.0\.0\b",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+)
 
-ROUTE_PATTERNS = [
-    r"@app\.(get|post|put|delete|patch)\(",
-    r"@router\.(get|post|put|delete|patch)\(",
-    r"app\.(get|post|put|delete|patch)\(",
-    r"router\.(get|post|put|delete|patch)\(",
-]
+LOOPBACK_BIND_PATTERNS = (
+    re.compile(
+        r"\b(?:app|application|server|uvicorn|web)\.(?:run|listen|serve)\s*\([^)]*\bhost\s*[:=]\s*['\"]?(?:localhost|127\.0\.0\.1|::1)\b",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"--host(?:\s+|=)['\"]?(?:localhost|127\.0\.0\.1|::1)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:HOST|BIND_HOST|SERVER_HOST|LISTEN_HOST)\s*=\s*['\"]?(?:localhost|127\.0\.0\.1|::1)\b",
+        re.IGNORECASE | re.MULTILINE,
+    ),
+)
 
 
 def detect_exposure(file_path: str) -> tuple[str, float]:
-    """
-    Estimate whether a file contains evidence of public exposure.
+    """Return an evidence-based exposure estimate, not an internet-reachability verdict.
 
-    This is contextual evidence, not proof of exploitability.
+    PUBLIC is reserved for explicit public-access configuration signals.
+    A 0.0.0.0 bind indicates listening on all interfaces, but routing/firewall
+    controls are outside this file-level analysis, so the result is UNKNOWN.
+    Route declarations and Docker EXPOSE metadata also do not prove public access.
     """
-
     path = Path(file_path)
 
     try:
-        content = path.read_text(
-            encoding="utf-8",
-            errors="ignore",
-        )
+        content = path.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return "UNKNOWN", 0.40
 
-    content_lower = content.lower()
+    for pattern in PUBLIC_PATTERNS:
+        if pattern.search(content):
+            return "PUBLIC", 0.85
 
-    # --------------------------------------------------
-    # Explicit public bind / public configuration
-    # --------------------------------------------------
+    if any(pattern.search(content) for pattern in ALL_INTERFACE_BIND_PATTERNS):
+        return "UNKNOWN", 0.65
 
-    for signal in PUBLIC_SIGNALS:
-        if signal.lower() in content_lower:
-            return "PUBLIC", 0.90
+    if any(pattern.search(content) for pattern in LOOPBACK_BIND_PATTERNS):
+        return "LOCAL", 0.70
 
-    # --------------------------------------------------
-    # Application routes
-    # --------------------------------------------------
-
-    for pattern in ROUTE_PATTERNS:
-        if re.search(pattern, content):
-            return "PUBLIC", 0.75
-
-    # --------------------------------------------------
-    # Docker port exposure
-    # --------------------------------------------------
-
-    if re.search(
-        r"^\s*EXPOSE\s+\d+",
-        content,
-        re.IGNORECASE | re.MULTILINE,
-    ):
-        return "PUBLIC", 0.70
-
-    # --------------------------------------------------
-    # No direct exposure evidence
-    # --------------------------------------------------
-
-    return "LOCAL", 0.50
+    # A route or Docker EXPOSE entry is not enough to infer internet exposure.
+    return "UNKNOWN", 0.40

@@ -19,7 +19,7 @@ class Finding:
     exposure: str = "UNKNOWN"
     exposure_confidence: float = 0.0
 
-    reachability: str = "NONE"
+    reachability: str = "UNKNOWN"
 
     context_score: float = 0.0
     risk_level: str = "INFO"

@@ -1,10 +1,15 @@
+from pathlib import Path
 from app.graph.builder import ApplicationGraphBuilder
 from app.graph.traversal import find_public_risk_path
 from app.services.repository_service import discover_files
 
+DEMO_REPO_PATH = str(
+    Path(__file__).resolve().parents[1] / "demo-repo"
+)
+
 
 def test_application_graph_builds():
-    repository_path = "../demo-repo"
+    repository_path = DEMO_REPO_PATH
 
     files = discover_files(repository_path)
 
@@ -16,7 +21,7 @@ def test_application_graph_builds():
 
 
 def test_production_config_has_public_risk_path():
-    repository_path = "../demo-repo"
+    repository_path = DEMO_REPO_PATH
 
     files = discover_files(repository_path)
 
@@ -33,7 +38,7 @@ def test_production_config_has_public_risk_path():
 
 
 def test_risk_path_reaches_route():
-    repository_path = "../demo-repo"
+    repository_path = DEMO_REPO_PATH
 
     files = discover_files(repository_path)
 

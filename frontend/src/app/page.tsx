@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/+$/, "");
+
 type Finding = {
   id: string;
   rule_id: string;
@@ -71,7 +73,7 @@ const [analysisId, setAnalysisId] = useState<string | null>(null);
     }
 
     const response = await fetch(
-      "http://127.0.0.1:8000/api/analyze",
+      `${API_BASE_URL}/api/analyze`,
       {
         method: "POST",
         body: formData,
@@ -114,7 +116,7 @@ const [analysisId, setAnalysisId] = useState<string | null>(null);
     const poll = async () => {
       try {
         const response = await fetch(
-          `http://127.0.0.1:8000/api/analyze/${analysisId}`
+          `${API_BASE_URL}/api/analyze/${analysisId}`
         );
 
         if (!response.ok) {
@@ -630,7 +632,7 @@ async function analyzeWithAI(finding: Finding) {
 
   try {
     const response = await fetch(
-      "http://127.0.0.1:8000/api/ai/explain",
+      `${API_BASE_URL}/api/ai/explain`,
       {
         method: "POST",
         headers: {
@@ -1399,6 +1401,10 @@ function FindingInspector({
 
             </div>
 
+            <p className="mt-4 text-xs leading-5 text-gray-500">
+              Base severity is the scanner rule&apos;s initial assessment. Context risk is a separate prioritization score adjusted by inferred environment, exposure, static reachability, and confidence. Neither score alone proves exploitability.
+            </p>
+
           </section>
 
           {/* LOCATION */}
@@ -1449,6 +1455,17 @@ function FindingInspector({
             </div>
 
           </section>
+
+          {finding.environment === "TEST" && finding.category.toLowerCase() === "secrets" && (
+            <div className="rounded-xl border border-yellow-500/20 bg-yellow-500/[0.04] p-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-yellow-400/80">
+                Test-context review
+              </p>
+              <p className="mt-2 text-sm leading-6 text-gray-400">
+                This credential-like value is in a test or fixture context. TraceLens still reports it because real credentials can be committed to tests. Confirm whether it is synthetic; if it was ever valid, revoke or rotate it.
+              </p>
+            </div>
+          )}
 
           {/* RISK PATH */}
 
@@ -1699,7 +1716,7 @@ function FindingInspector({
               ) : finding.rule_id === "SEC-008" ? (
                 <p className="text-sm leading-6 text-gray-300">
                   Remove credentials from the CI/CD workflow and use the
-                  platform's encrypted secret mechanism instead.
+                  platform&apos;s encrypted secret mechanism instead.
                 </p>
               ) : (
                 <p className="text-sm leading-6 text-gray-300">
