@@ -1,0 +1,1 @@
+benchmark_finding_id,repo_id,repo_commit,scanner_commit,scan_timestamp,rule_id,path,line_start,line_end,evidence_redacted,evidence_sha256,base_severity,context_score,context_risk,environment,exposure,reachability,finding_validity,triage_priority,label_rationale,ground_truth_source_url,reviewer_1,reviewer_2,adjudicated_by,adjudication_notes

@@ -29,3 +29,6 @@ Thumbs.db
 
 # Duplicate frontend copy
 /backend/frontend/
+
+# Python packaging metadata
+*.egg-info/

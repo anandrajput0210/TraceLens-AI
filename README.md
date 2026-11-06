@@ -51,3 +51,13 @@ Context Risk Score
 Prioritized Findings
     ↓
 Risk Explanation
+
+## Quick start
+
+For the fastest local demo, install Docker Desktop and run:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:3000` and upload a ZIP of `demo-repo`. Gemini is optional: scanning and contextual ranking work without an API key; AI explanations require `GEMINI_API_KEY` in the root `.env` file. See [DEPLOYMENT.md](DEPLOYMENT.md) for configuration and limitations.

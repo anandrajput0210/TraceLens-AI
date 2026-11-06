@@ -2,6 +2,7 @@ import shutil
 import uuid
 from pathlib import Path
 
+from app.risk.scoring import get_risk_level, scoring_policy
 from app.scanner.engine import ScannerEngine
 from app.services.repository_service import discover_files
 from app.utils.redaction import redact_evidence
@@ -117,20 +118,7 @@ def run_analysis(
             default=0,
         )
 
-        if overall_score >= 90:
-            overall_level = "CRITICAL"
-
-        elif overall_score >= 75:
-            overall_level = "HIGH"
-
-        elif overall_score >= 50:
-            overall_level = "MEDIUM"
-
-        elif overall_score >= 25:
-            overall_level = "LOW"
-
-        else:
-            overall_level = "INFO"
+        overall_level = get_risk_level(overall_score)
 
         # -----------------------------------------------------
         # Store analysis result
@@ -145,6 +133,7 @@ def run_analysis(
             "findings_count": len(findings),
             "overall_score": overall_score,
             "risk_level": overall_level,
+            "scoring_policy": scoring_policy(),
 
             "findings": [
                 serialize_finding(finding)

@@ -24,7 +24,9 @@ Do not set the value to `*`. The backend enables credentialed CORS requests and 
 
 ## AI configuration
 
-Set `OPENAI_API_KEY` on the backend only. Optionally set `TRACELENS_AI_MODEL` to a model supported by the API account. Never place secret keys in `NEXT_PUBLIC_*` frontend variables.
+Set `GEMINI_API_KEY` on the backend only. The default model is `gemini-3.5-flash-lite`; override it with `TRACELENS_AI_MODEL` only when you have verified that model is available to your Google AI Studio project.
+
+AI explanations are optional. If the key is absent or Gemini is unavailable, the dashboard keeps the deterministic findings and displays an AI-unavailable message. Never place secret keys in `NEXT_PUBLIC_*` frontend variables.
 
 ## Current MVP limitations
 
@@ -33,3 +35,15 @@ Set `OPENAI_API_KEY` on the backend only. Optionally set `TRACELENS_AI_MODEL` to
 - Static import relationships are heuristic evidence and do not prove runtime execution, data-flow reachability, internet exposure, or exploitability.
 - Configure an upstream proxy/server request-size limit as well as the application's request-body middleware for a public deployment.
 - Before exposing this service to untrusted users, add authentication/authorization, rate limits, operational monitoring, and a durable job/result store.
+
+## One-command local demo with Docker Compose
+
+Install Docker Desktop with Docker Compose, then run from the repository root:
+
+```bash
+docker compose up --build
+```
+
+Open `http://localhost:3000`. The backend is available at `http://localhost:8000`. You can scan a ZIP of the included `demo-repo` folder. No Gemini key is required for deterministic scanning; AI explanations remain unavailable until `GEMINI_API_KEY` is configured in the root `.env` file.
+
+To stop the services, run `docker compose down`.

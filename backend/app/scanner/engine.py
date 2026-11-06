@@ -93,6 +93,7 @@ class ScannerEngine:
                 finding.get("rule_id"),
                 finding.get("file"),
                 finding.get("line"),
+                finding.get("column"),
                 finding.get("evidence"),
             )
 

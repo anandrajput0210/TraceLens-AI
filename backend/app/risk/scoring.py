@@ -100,8 +100,15 @@ def calculate_context_risk(
     # because context information is incomplete.
     # ---------------------------------------------------------
 
+    # In a test context the floor is lower, so a CRITICAL finding in tests
+    # still ranks below the same finding in production.
     if base_severity.upper() == "CRITICAL":
-        score = max(score, 75)
+        floor = (
+            CRITICAL_SCORE_FLOOR["test"]
+            if environment.upper() == "TEST"
+            else CRITICAL_SCORE_FLOOR["default"]
+        )
+        score = max(score, floor)
 
     level = get_risk_level(score)
 
@@ -111,18 +118,35 @@ def calculate_context_risk(
     )
 
 
+# Minimum score for each level, highest first. This is the only place the
+# thresholds are defined: classification, the analysis summary and the
+# dashboard's score scale all read from it.
+RISK_LEVEL_THRESHOLDS = (
+    (90, "CRITICAL"),
+    (75, "HIGH"),
+    (50, "MEDIUM"),
+    (25, "LOW"),
+)
+
+# Minimum score of a CRITICAL finding; lower in test files so it still ranks
+# below the same finding in production.
+CRITICAL_SCORE_FLOOR = {"default": 75, "test": 60}
+
+
 def get_risk_level(score: int) -> str:
-
-    if score >= 90:
-        return "CRITICAL"
-
-    if score >= 75:
-        return "HIGH"
-
-    if score >= 50:
-        return "MEDIUM"
-
-    if score >= 25:
-        return "LOW"
+    for minimum, level in RISK_LEVEL_THRESHOLDS:
+        if score >= minimum:
+            return level
 
     return "INFO"
+
+
+def scoring_policy() -> dict:
+    """Thresholds exposed to clients so they never hardcode their own."""
+    return {
+        "levels": [
+            {"level": level, "min": minimum}
+            for minimum, level in reversed(RISK_LEVEL_THRESHOLDS)
+        ],
+        "critical_floor": dict(CRITICAL_SCORE_FLOOR),
+    }

@@ -4,6 +4,8 @@ import math
 import re
 from collections import Counter
 
+from app.utils.provider_tokens import PROVIDER_TOKEN_RULES
+
 
 MASK = "[REDACTED]"
 
@@ -43,7 +45,7 @@ QUOTED_ASSIGNMENT_RE = re.compile(
 # Unquoted assignments. Stop before delimiters and quote characters,
 # so the surrounding source syntax is not accidentally consumed.
 UNQUOTED_ASSIGNMENT_RE = re.compile(
-    r"(?P<prefix>" + SENSITIVE_NAME + r"\s*[:=]\s*)(?![\"'])"
+    r"(?P<prefix>" + SENSITIVE_NAME + r"\s*[:=]\s*)(?![\"']|\[REDACTED\])"
     r"(?P<value>[^\s,;#}\]\)\"']+)",
     re.IGNORECASE,
 )
@@ -77,6 +79,12 @@ KNOWN_TOKEN_RE = re.compile(
     r"sk-[A-Za-z0-9_-]{20,}|"
     r"AKIA[0-9A-Z]{16}"
     r")\b"
+)
+
+# Private key material inline after a PEM header (escaped-newline JSON form).
+PRIVATE_KEY_INLINE_RE = re.compile(
+    r"(?P<header>-----BEGIN (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----"
+    r"(?:\\[nr]|\s)*)[A-Za-z0-9+/=]{40,}(?:(?:\\[nr]|\s)+[A-Za-z0-9+/=]{4,})*"
 )
 
 JWT_RE = re.compile(
@@ -209,7 +217,14 @@ def redact_evidence(evidence: str) -> str:
         return evidence
 
     # Recognizable tokens, including those assigned to innocuous variables.
+    evidence = PRIVATE_KEY_INLINE_RE.sub(
+        lambda match: match.group("header") + MASK,
+        evidence,
+    )
     evidence = KNOWN_TOKEN_RE.sub(MASK, evidence)
+    for _label, pattern, is_secret_value in PROVIDER_TOKEN_RULES:
+        if is_secret_value:
+            evidence = pattern.sub(MASK, evidence)
     evidence = JWT_RE.sub(MASK, evidence)
 
     # Preserve useful URL context while hiding user-info passwords.

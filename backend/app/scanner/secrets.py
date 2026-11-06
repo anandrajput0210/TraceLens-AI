@@ -2,6 +2,8 @@ import math
 import re
 from pathlib import Path
 
+from app.utils.provider_tokens import PRIVATE_KEY_HEADER, PROVIDER_TOKEN_RULES
+
 
 # =========================================================
 # SECRET KEYWORDS
@@ -29,7 +31,11 @@ SECRET_KEYWORDS = [
 SAFE_VALUE_PATTERNS = [
     "os.getenv(",
     "os.environ.get(",
+    "os.environ[",
     "process.env.",
+    "process.env[",
+    "import.meta.env",
+    "deno.env.get(",
     "getenv(",
 ]
 
@@ -42,8 +48,14 @@ SAFE_REFERENCE_PATTERNS = (
 )
 
 PLACEHOLDER_TOKEN_PATTERN = re.compile(
-    r"(?i)(?:^|[._:/-])(?:demo|dummy|example|sample|fake|placeholder|"
-    r"changeme|replace[-_]?me|redacted)(?:$|[._:/-])"
+    r"(?i)(?:^|[._:/\-\[\]<>{}*])(?:demo|dummy|example|sample|fake|placeholder|"
+    r"changeme|replace[-_]?me|redacted)(?:$|[._:/\-\[\]<>{}*])"
+)
+
+# Redaction markers written by other tools, e.g. "[REDACTED_BY_TOOL]" or "***".
+REDACTION_MARKER_PATTERN = re.compile(
+    r"^(?:\[\s*redacted[^\]]*\]|<\s*redacted[^>]*>|\*{3,}|x{6,}|\.{3,})$",
+    re.IGNORECASE,
 )
 
 CAMEL_PLACEHOLDER_PREFIX_PATTERN = re.compile(
@@ -55,6 +67,35 @@ TEST_PLACEHOLDER_PATTERN = re.compile(
 )
 
 
+# Sample credentials published in vendor documentation.
+KNOWN_SAMPLE_VALUES = {
+    "AKIAIOSFODNN7EXAMPLE",
+    "AKIAI44QH8DHBEXAMPLE",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+}
+
+# AWS documentation style access key ids: AKIA + letters/digits + EXAMPLE.
+AWS_SAMPLE_KEY_PATTERN = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{0,16}EXAMPLE[0-9A-Z]{0,4}")
+
+
+# Template-style values such as "your-token-here" or "<your-stripe-key>".
+# The marker words count only when the WHOLE value is a short phrase of plain
+# words. A value with digits or long random chunks (abc_your_def_123456) is
+# never treated as a placeholder just because it contains one of these words.
+PLACEHOLDER_PHRASE_PATTERN = re.compile(
+    r"<?[A-Za-z]{1,8}(?:[-_. ][A-Za-z]{1,8}){1,5}>?"
+)
+PLACEHOLDER_PHRASE_WORDS = {"your", "insert", "todo", "tbd", "here"}
+
+
+def looks_like_placeholder_phrase(value: str) -> bool:
+    if not PLACEHOLDER_PHRASE_PATTERN.fullmatch(value):
+        return False
+
+    words = re.split(r"[-_. <>]+", value.lower())
+    return any(word in PLACEHOLDER_PHRASE_WORDS for word in words)
+
+
 def is_placeholder_or_reference(value: str) -> bool:
     """Return True only for clearly labelled placeholders or variable references."""
     value = value.strip().strip("\"'")
@@ -62,7 +103,14 @@ def is_placeholder_or_reference(value: str) -> bool:
         return False
     if any(pattern.fullmatch(value) for pattern in SAFE_REFERENCE_PATTERNS):
         return True
+    if REDACTION_MARKER_PATTERN.fullmatch(value):
+        return True
+    # Documented sample credentials only (not any value ending in EXAMPLE).
+    if value in KNOWN_SAMPLE_VALUES or AWS_SAMPLE_KEY_PATTERN.fullmatch(value):
+        return True
     if PLACEHOLDER_TOKEN_PATTERN.search(value):
+        return True
+    if looks_like_placeholder_phrase(value):
         return True
     if CAMEL_PLACEHOLDER_PREFIX_PATTERN.fullmatch(value):
         return True
@@ -112,6 +160,100 @@ HEX_COLOR_PATTERN = re.compile(
 IP_ADDRESS_PATTERN = re.compile(
     r"^\d{1,3}(?:\.\d{1,3}){3}$"
 )
+
+
+# npm registry auth lines, e.g. //registry.npmjs.org/:_authToken=...
+NPMRC_AUTH_LINE_PATTERN = re.compile(
+    r"^//[^\s=]+:_(?:authToken|auth|password)\s*=", re.IGNORECASE
+)
+
+
+# =========================================================
+# PROVIDER-SPECIFIC CREDENTIAL FORMATS
+# =========================================================
+#
+# These tokens have a distinctive, documented format, so a match is far
+# stronger evidence of a real credential than a variable called "password".
+# They are reported under SEC-001 with a specific title and CRITICAL severity.
+
+def find_provider_tokens(text: str) -> list[tuple[str, str, int]]:
+    """Return every real-looking provider token as (label, token, start)."""
+    hits: list[tuple[str, str, int]] = []
+    taken: list[tuple[int, int]] = []
+
+    for label, pattern, is_secret_value in PROVIDER_TOKEN_RULES:
+        # Marker-only rules (such as a private key header) are not credentials.
+        if not is_secret_value:
+            continue
+
+        for match in pattern.finditer(text):
+            token = match.group(0)
+            if is_placeholder_or_reference(token):
+                continue
+            span = match.span()
+            if any(span[0] < end and start < span[1] for start, end in taken):
+                continue
+            taken.append(span)
+            hits.append((label, token, span[0]))
+
+    return sorted(hits, key=lambda hit: hit[2])
+
+
+# Key material that follows a PEM header: a base64 body line, or the body
+# inline after an escaped newline (as in service-account JSON files).
+PEM_BODY_LINE_PATTERN = re.compile(r"[A-Za-z0-9+/]{40,}={0,2}")
+PEM_BODY_INLINE_PATTERN = re.compile(r"(?:\\[nr]|\s)*[A-Za-z0-9+/]{40,}={0,2}")
+
+
+def find_private_key_block(
+    lines: list[str],
+    index: int,
+) -> tuple[int, int] | None:
+    """Detect an embedded PEM private key starting on lines[index].
+
+    Returns (column, end_column) of the header and the rest of its quoted
+    value, or None. A header with no key material after it, such as a code
+    check for the header string, is not a finding.
+    """
+    line = lines[index]
+    header = PRIVATE_KEY_HEADER.search(line)
+
+    if not header:
+        return None
+
+    rest = line[header.end():]
+    has_material = False
+
+    inline = PEM_BODY_INLINE_PATTERN.match(rest)
+    if inline:
+        has_material = not is_placeholder_or_reference(
+            inline.group(0).replace("\\n", "").replace("\\r", "").strip()
+        )
+    else:
+        for following in lines[index + 1:index + 5]:
+            text = following.strip()
+            if not text or text.startswith(("Proc-Type:", "DEK-Info:")):
+                continue
+            if PEM_BODY_LINE_PATTERN.fullmatch(text):
+                has_material = not is_placeholder_or_reference(text)
+            break
+
+    if not has_material:
+        return None
+
+    end = len(line)
+    for quote in ('"', "'"):
+        found = line.find(quote, header.end())
+        if found != -1:
+            end = min(end, found)
+
+    return header.start(), end
+
+
+def find_provider_token(text: str) -> tuple[str, str] | None:
+    """Return (label, token) for the first provider token, if any."""
+    hits = find_provider_tokens(text)
+    return (hits[0][0], hits[0][1]) if hits else None
 
 
 # =========================================================
@@ -493,7 +635,7 @@ def scan_high_entropy_strings(
 
         matches = re.finditer(
             r"""
-            (?P<name>[A-Za-z_][A-Za-z0-9_]*)
+            ["']?(?P<name>[A-Za-z_][A-Za-z0-9_]*)["']?
             \s*(?:=|:)
             \s*
             (?P<quote>["'])
@@ -534,6 +676,9 @@ def scan_high_entropy_strings(
             # Apply conservative high-entropy detection.
             # -------------------------------------------------
 
+            if find_provider_token(value):
+                continue
+
             if not looks_like_high_entropy_secret(value):
                 continue
 
@@ -549,6 +694,7 @@ def scan_high_entropy_strings(
                     "evidence": stripped,
                     "base_severity": "MEDIUM",
                     "confidence": 0.80,
+                    "column": match.start("value"),
                     "entropy": round(entropy, 2),
                 }
             )
@@ -584,92 +730,110 @@ def scan_hardcoded_credentials(
         return []
 
     findings = []
+    lines = content.splitlines()
 
     for line_number, line in enumerate(
-        content.splitlines(),
+        lines,
         start=1,
     ):
         stripped = line.strip()
 
         # -------------------------------------------------
-        # Ignore comments.
+        # Ignore comments, except npm auth lines such as
+        # //registry.npmjs.org/:_authToken=..., which begin
+        # with // but are real configuration.
         # -------------------------------------------------
 
-        if (
-            stripped.startswith("#")
-            or stripped.startswith("//")
-        ):
+        is_comment = stripped.startswith("#") or (
+            stripped.startswith("//")
+            and not NPMRC_AUTH_LINE_PATTERN.match(stripped)
+        )
+
+        if is_comment:
             continue
 
+        def add_finding(title, severity, confidence, column):
+            findings.append(
+                {
+                    "rule_id": "SEC-001",
+                    "title": title,
+                    "category": "Secrets",
+                    "file": relative_path or path.name,
+                    "line": line_number,
+                    "evidence": stripped,
+                    "base_severity": severity,
+                    "confidence": confidence,
+                    "column": column,
+                }
+            )
+
         # -------------------------------------------------
-        # Find simple variable assignments.
-        #
-        # Examples:
-        #
-        # password = "supersecret"
-        # API_TOKEN = "abc..."
-        # database_url = "postgres://..."
+        # Provider-specific token formats win over the generic
+        # variable-name heuristic, whatever the variable is called.
+        # Every token on the line is reported.
         # -------------------------------------------------
 
-        match = re.search(
+        provider_hits = find_provider_tokens(line)
+        provider_spans = []
+
+        # A private key counts only when key material follows the header.
+        private_key = find_private_key_block(lines, line_number - 1)
+
+        if private_key:
+            key_start, key_end = private_key
+            provider_spans.append((key_start, key_end))
+            add_finding("Hardcoded private key", "CRITICAL", 0.97, key_start)
+
+        for label, token, start in provider_hits:
+            provider_spans.append((start, start + len(token)))
+            add_finding(f"Hardcoded {label}", "CRITICAL", 0.97, start)
+
+        # -------------------------------------------------
+        # Generic assignments: password = "...", {"apiKey": "..."}.
+        # Every assignment on the line is checked.
+        # -------------------------------------------------
+
+        for match in re.finditer(
             r"""
-            (?P<name>[A-Za-z_][A-Za-z0-9_]*)
+            ["\']?(?P<name>[A-Za-z_][A-Za-z0-9_]*)["\']?
             \s*(?:=|:)
             \s*
             (?P<value>
-                ["'][^"']+["']
+                ["\'][^"\']+["\']
                 |
-                [^,\s]+
+                [^,\s"\'{\[][^,\s]*
             )
             """,
             line,
             re.VERBOSE,
-        )
+        ):
+            variable_name_lower = match.group("name").lower()
+            value = match.group("value")
+            value_start, value_end = match.span("value")
 
-        if not match:
-            continue
+            # Already reported as a provider token.
+            if any(
+                value_start < end and start < value_end
+                for start, end in provider_spans
+            ):
+                continue
 
-        # -------------------------------------------------
-        # Extract the variable name directly.
-        # -------------------------------------------------
+            # The variable name must indicate a credential...
+            if not any(
+                keyword in variable_name_lower
+                for keyword in SECRET_KEYWORDS
+            ):
+                continue
 
-        variable_name = match.group("name")
-        variable_name_lower = variable_name.lower()
+            # ...and the value must look like a real hardcoded one.
+            if not looks_like_secret_value(value):
+                continue
 
-        value = match.group("value")
-
-        # -------------------------------------------------
-        # Check whether the variable name indicates a
-        # credential.
-        # -------------------------------------------------
-
-        is_credential_name = any(
-            keyword in variable_name_lower
-            for keyword in SECRET_KEYWORDS
-        )
-
-        if not is_credential_name:
-            continue
-
-        # -------------------------------------------------
-        # Check whether the assigned value looks like a
-        # real hardcoded credential.
-        # -------------------------------------------------
-
-        if not looks_like_secret_value(value):
-            continue
-
-        findings.append(
-            {
-                "rule_id": "SEC-001",
-                "title": "Potential hardcoded credential",
-                "category": "Secrets",
-                "file": relative_path or path.name,
-                "line": line_number,
-                "evidence": stripped,
-                "base_severity": "HIGH",
-                "confidence": 0.90,
-            }
-        )
+            add_finding(
+                "Potential hardcoded credential",
+                "HIGH",
+                0.90,
+                value_start,
+            )
 
     return findings

@@ -1,0 +1,16 @@
+.git
+.tracelens-local-backups
+.venv
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/.next
+**/dist
+**/build
+**/.env
+**/.env.*
+!**/.env.example
+*.log
+demo-repo

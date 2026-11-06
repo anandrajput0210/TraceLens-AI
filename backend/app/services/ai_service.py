@@ -42,11 +42,11 @@ def explain_finding(finding: dict) -> dict:
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not configured.")
 
-    model = os.getenv("TRACELENS_AI_MODEL", "gemini-3.5-flash-lite").strip()
+    model = os.getenv("TRACELENS_AI_MODEL", DEFAULT_MODEL).strip()
     if not model:
-        model = "gemini-3.5-flash-lite"
+        model = DEFAULT_MODEL
 
-    safe_finding = redact_data(finding) if callable(globals().get("redact_data")) else finding
+    safe_finding = redact_data(finding)
     try:
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
@@ -70,6 +70,4 @@ def explain_finding(finding: dict) -> dict:
         raise RuntimeError("AI returned an invalid JSON response.") from None
     if not isinstance(parsed, dict):
         raise RuntimeError("AI returned an invalid JSON response.")
-    if callable(globals().get("redact_data")):
-        parsed = redact_data(parsed)
-    return parsed
+    return redact_data(parsed)
